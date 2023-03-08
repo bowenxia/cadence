@@ -121,6 +121,7 @@ var (
 	ComponentIndexerProcessor           = component("indexer-processor")
 	ComponentIndexerESProcessor         = component("indexer-es-processor")
 	ComponentESVisibilityManager        = component("es-visibility-manager")
+	ComponentPinotVisibilityManager     = component("pinot-visibility-manager")
 	ComponentArchiver                   = component("archiver")
 	ComponentBatcher                    = component("batcher")
 	ComponentWorker                     = component("worker")
