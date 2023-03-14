@@ -23,6 +23,7 @@ package pinotVisibility
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/startreedata/pinot-client-go/pinot"
 	workflow "github.com/uber/cadence/.gen/go/shared"
 	"github.com/uber/cadence/common"
@@ -30,7 +31,9 @@ import (
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/messaging"
 	p "github.com/uber/cadence/common/persistence"
+	pn "github.com/uber/cadence/common/pinot"
 	"github.com/uber/cadence/common/service"
+	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/common/types/mapper/thrift"
 )
 
@@ -40,7 +43,7 @@ const (
 
 type (
 	pinotVisibilityStore struct {
-		pinotClient *pinot.Connection
+		pinotClient pn.GenericClient
 		index       string
 		producer    messaging.Producer
 		logger      log.Logger
@@ -74,7 +77,7 @@ type (
 var _ p.VisibilityStore = (*pinotVisibilityStore)(nil)
 
 func NewPinotVisibilityStore(
-	pinotClient *pinot.Connection,
+	pinotClient pn.GenericClient,
 	index string,
 	producer messaging.Producer,
 	logger log.Logger,
@@ -180,13 +183,50 @@ func (v *pinotVisibilityStore) RecordWorkflowExecutionUninitialized(ctx context.
 }
 
 func (v *pinotVisibilityStore) UpsertWorkflowExecution(ctx context.Context, request *p.InternalUpsertWorkflowExecutionRequest) error {
-	//TODO implement me
-	panic("implement me")
+	v.checkProducer()
+	msg := createVisibilityMessage(
+		request.DomainUUID,
+		request.WorkflowID,
+		request.RunID,
+		request.WorkflowTypeName,
+		request.TaskList,
+		request.StartTimestamp.UnixNano(),
+		request.ExecutionTimestamp.UnixNano(),
+		request.TaskID,
+		request.Memo.Data,
+		request.Memo.GetEncoding(),
+		request.IsCron,
+		request.NumClusters,
+		request.SearchAttributes,
+		common.UpsertSearchAttributes,
+		0, // will not be used
+		0, // will not be used
+		0, // will not be used
+		request.UpdateTimestamp.UnixNano(),
+		request.ShardID,
+	)
+	return v.producer.Publish(ctx, msg)
 }
 
 func (v *pinotVisibilityStore) ListClosedWorkflowExecutions(ctx context.Context, request *p.InternalListWorkflowExecutionsRequest) (*p.InternalListWorkflowExecutionsResponse, error) {
-	//TODO implement me
-	panic("implement me")
+	isRecordValid := func(rec *p.InternalVisibilityWorkflowExecutionInfo) bool {
+		return !request.EarliestTime.After(rec.CloseTime) && !rec.CloseTime.After(request.LatestTime)
+	}
+
+	resp, err := v.pinotClient.Search(ctx, &pinot.SearchRequest{
+		Index:           v.index,
+		ListRequest:     request,
+		IsOpen:          false,
+		Filter:          isRecordValid,
+		MatchQuery:      nil,
+		MaxResultWindow: v.config.ESIndexMaxResultWindow(),
+	})
+	if err != nil {
+		return nil, &types.InternalServiceError{
+			Message: fmt.Sprintf("ListClosedWorkflowExecutions failed, %v", err),
+		}
+	}
+	return resp, nil
 }
 
 func (v *pinotVisibilityStore) ListOpenWorkflowExecutionsByType(ctx context.Context, request *p.InternalListWorkflowExecutionsByTypeRequest) (*p.InternalListWorkflowExecutionsResponse, error) {
