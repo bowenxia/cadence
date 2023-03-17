@@ -31,19 +31,20 @@ import (
 	"github.com/uber/cadence/common/log/tag"
 	"github.com/uber/cadence/common/messaging"
 	p "github.com/uber/cadence/common/persistence"
-	pn "github.com/uber/cadence/common/pinot"
 	"github.com/uber/cadence/common/service"
 	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/common/types/mapper/thrift"
+	"time"
 )
 
 const (
 	pinotPersistenceName = "pinot"
+	tableName            = "cadence-visibility-pinot"
 )
 
 type (
 	pinotVisibilityStore struct {
-		pinotClient pn.GenericClient
+		pinotClient *pinot.Connection
 		index       string
 		producer    messaging.Producer
 		logger      log.Logger
@@ -77,7 +78,7 @@ type (
 var _ p.VisibilityStore = (*pinotVisibilityStore)(nil)
 
 func NewPinotVisibilityStore(
-	pinotClient pn.GenericClient,
+	pinotClient *pinot.Connection,
 	index string,
 	producer messaging.Producer,
 	logger log.Logger,
@@ -209,24 +210,92 @@ func (v *pinotVisibilityStore) UpsertWorkflowExecution(ctx context.Context, requ
 }
 
 func (v *pinotVisibilityStore) ListClosedWorkflowExecutions(ctx context.Context, request *p.InternalListWorkflowExecutionsRequest) (*p.InternalListWorkflowExecutionsResponse, error) {
-	isRecordValid := func(rec *p.InternalVisibilityWorkflowExecutionInfo) bool {
-		return !request.EarliestTime.After(rec.CloseTime) && !rec.CloseTime.After(request.LatestTime)
-	}
+	//isRecordValid := func(rec *p.InternalVisibilityWorkflowExecutionInfo) bool {
+	//	return !request.EarliestTime.After(rec.CloseTime) && !rec.CloseTime.After(request.LatestTime)
+	//} // not sure where to use
 
-	resp, err := v.pinotClient.Search(ctx, &pinot.SearchRequest{
-		Index:           v.index,
-		ListRequest:     request,
-		IsOpen:          false,
-		Filter:          isRecordValid,
-		MatchQuery:      nil,
-		MaxResultWindow: v.config.ESIndexMaxResultWindow(),
-	})
+	ListClosedWorkflowExecutionsQuery := getListClosedWorkflowExecutionsQuery(request)
+	resp, err := v.pinotClient.ExecuteSQL(tableName, ListClosedWorkflowExecutionsQuery)
 	if err != nil {
 		return nil, &types.InternalServiceError{
 			Message: fmt.Sprintf("ListClosedWorkflowExecutions failed, %v", err),
 		}
 	}
-	return resp, nil
+	return getInternalListWorkflowExecutionsResponse(resp), nil
+}
+
+func getInternalListWorkflowExecutionsResponse(resp *pinot.BrokerResponse) *p.InternalListWorkflowExecutionsResponse {
+	// TODO implement me
+	return nil
+}
+
+/*
+	SELECT *
+	FROM {tableName}
+	WHERE DomainId = {DomainID}
+
+	AND CloseTime BETWEEN {earlistTime} AND {latestTime}
+
+	AND CloseStatus = 1
+
+	Order BY CloseTime DESC
+	Order BY RunId DESC
+*/
+
+func getListClosedWorkflowExecutionsQuery(request *p.InternalListWorkflowExecutionsRequest) string {
+	query := NewPinotQuery()
+
+	query.filters.addEqual("DomainId", request.DomainUUID)
+	query.filters.addTimeRange("CloseTime", request.EarliestTime, request.LatestTime)
+	query.filters.addEqual("CloseStatus", "1")
+
+	query.addPinotSorter("CloseTime", "DESC")
+	query.addPinotSorter("RunId", "DESC")
+	return query.String()
+}
+
+type PinotQuery struct {
+	query   string
+	filters PinotQueryFilter
+	sorters string
+}
+
+type PinotQueryFilter struct {
+	string
+}
+
+func (f *PinotQueryFilter) checkFirstFilter() {
+	if f.string == "" {
+		f.string = "WHERE "
+	} else {
+		f.string += "AND "
+	}
+}
+
+func (f *PinotQueryFilter) addEqual(obj string, val string) {
+	f.checkFirstFilter()
+	f.string += fmt.Sprintf("%s = %s\n", obj, val)
+}
+
+func (f *PinotQueryFilter) addTimeRange(obj string, earlist time.Time, latest time.Time) {
+	f.checkFirstFilter()
+	f.string += fmt.Sprintf("%s BETWEEN %v AND %v\n", obj, earlist, latest)
+}
+
+func NewPinotQuery() PinotQuery {
+	return PinotQuery{
+		query:   fmt.Sprintf("SELECT *\nFROM %s\n", tableName),
+		filters: PinotQueryFilter{},
+		sorters: "",
+	}
+}
+
+func (q *PinotQuery) String() string {
+	return fmt.Sprintf("%s%s%s", q.query, q.filters.string, q.sorters)
+}
+
+func (q *PinotQuery) addPinotSorter(orderBy string, order string) {
+	q.sorters += fmt.Sprintf("Order BY %s %s\n", orderBy, order)
 }
 
 func (v *pinotVisibilityStore) ListOpenWorkflowExecutionsByType(ctx context.Context, request *p.InternalListWorkflowExecutionsByTypeRequest) (*p.InternalListWorkflowExecutionsResponse, error) {
