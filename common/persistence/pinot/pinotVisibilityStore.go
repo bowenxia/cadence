@@ -113,8 +113,8 @@ func (v *pinotVisibilityStore) RecordWorkflowExecutionStarted(
 		request.RunID,
 		request.WorkflowTypeName,
 		request.TaskList,
-		request.StartTimestamp.UnixNano(),
-		request.ExecutionTimestamp.UnixNano(),
+		request.StartTimestamp.UnixMilli(),
+		request.ExecutionTimestamp.UnixMilli(),
 		request.TaskID,
 		request.Memo.Data,
 		request.Memo.GetEncoding(),
@@ -122,10 +122,10 @@ func (v *pinotVisibilityStore) RecordWorkflowExecutionStarted(
 		request.NumClusters,
 		request.SearchAttributes,
 		common.RecordStarted,
-		0,                                  // will not be used
-		0,                                  // will not be used
-		0,                                  // will not be used
-		request.UpdateTimestamp.UnixNano(), // will be updated when workflow execution updates
+		0,                                   // will not be used
+		0,                                   // will not be used
+		0,                                   // will not be used
+		request.UpdateTimestamp.UnixMilli(), // will be updated when workflow execution updates
 		int64(request.ShardID),
 	)
 	return v.producer.Publish(ctx, msg)
@@ -139,8 +139,8 @@ func (v *pinotVisibilityStore) RecordWorkflowExecutionClosed(ctx context.Context
 		request.RunID,
 		request.WorkflowTypeName,
 		request.TaskList,
-		request.StartTimestamp.UnixNano(),
-		request.ExecutionTimestamp.UnixNano(),
+		request.StartTimestamp.UnixMilli(),
+		request.ExecutionTimestamp.UnixMilli(),
 		request.TaskID,
 		request.Memo.Data,
 		request.Memo.GetEncoding(),
@@ -148,10 +148,10 @@ func (v *pinotVisibilityStore) RecordWorkflowExecutionClosed(ctx context.Context
 		request.NumClusters,
 		request.SearchAttributes,
 		common.RecordClosed,
-		request.CloseTimestamp.UnixNano(),
+		request.CloseTimestamp.UnixMilli(),
 		*thrift.FromWorkflowExecutionCloseStatus(&request.Status),
 		request.HistoryLength,
-		request.UpdateTimestamp.UnixNano(),
+		request.UpdateTimestamp.UnixMilli(),
 		int64(request.ShardID),
 	)
 	return v.producer.Publish(ctx, msg)
@@ -177,7 +177,7 @@ func (v *pinotVisibilityStore) RecordWorkflowExecutionUninitialized(ctx context.
 		0,
 		0,
 		0,
-		request.UpdateTimestamp.UnixNano(),
+		request.UpdateTimestamp.UnixMilli(),
 		request.ShardID,
 	)
 	return v.producer.Publish(ctx, msg)
@@ -191,8 +191,8 @@ func (v *pinotVisibilityStore) UpsertWorkflowExecution(ctx context.Context, requ
 		request.RunID,
 		request.WorkflowTypeName,
 		request.TaskList,
-		request.StartTimestamp.UnixNano(),
-		request.ExecutionTimestamp.UnixNano(),
+		request.StartTimestamp.UnixMilli(),
+		request.ExecutionTimestamp.UnixMilli(),
 		request.TaskID,
 		request.Memo.Data,
 		request.Memo.GetEncoding(),
@@ -203,99 +203,194 @@ func (v *pinotVisibilityStore) UpsertWorkflowExecution(ctx context.Context, requ
 		0, // will not be used
 		0, // will not be used
 		0, // will not be used
-		request.UpdateTimestamp.UnixNano(),
+		request.UpdateTimestamp.UnixMilli(),
 		request.ShardID,
 	)
 	return v.producer.Publish(ctx, msg)
 }
 
-func (v *pinotVisibilityStore) ListClosedWorkflowExecutions(ctx context.Context, request *p.InternalListWorkflowExecutionsRequest) (*p.InternalListWorkflowExecutionsResponse, error) {
-	//isRecordValid := func(rec *p.InternalVisibilityWorkflowExecutionInfo) bool {
-	//	return !request.EarliestTime.After(rec.CloseTime) && !rec.CloseTime.After(request.LatestTime)
-	//} // not sure where to use
+func (v *pinotVisibilityStore) ListOpenWorkflowExecutions(
+	ctx context.Context,
+	request *p.InternalListWorkflowExecutionsRequest,
+) (*p.InternalListWorkflowExecutionsResponse, error) {
+	isRecordValid := func(rec *p.InternalVisibilityWorkflowExecutionInfo) bool {
+		return !request.EarliestTime.After(rec.CloseTime) && !rec.CloseTime.After(request.LatestTime)
+	}
 
-	ListClosedWorkflowExecutionsQuery := getListClosedWorkflowExecutionsQuery(request)
+	ListClosedWorkflowExecutionsQuery := getListWorkflowExecutionsQuery(request, false)
 	resp, err := v.pinotClient.ExecuteSQL(tableName, ListClosedWorkflowExecutionsQuery)
 	if err != nil {
 		return nil, &types.InternalServiceError{
 			Message: fmt.Sprintf("ListClosedWorkflowExecutions failed, %v", err),
 		}
 	}
-	return getInternalListWorkflowExecutionsResponse(resp), nil
+	return v.getInternalListWorkflowExecutionsResponse(resp, isRecordValid)
 }
 
-func getInternalListWorkflowExecutionsResponse(resp *pinot.BrokerResponse) *p.InternalListWorkflowExecutionsResponse {
-	// TODO implement me
-	return nil
+func (v *pinotVisibilityStore) ListClosedWorkflowExecutions(
+	ctx context.Context,
+	request *p.InternalListWorkflowExecutionsRequest,
+) (*p.InternalListWorkflowExecutionsResponse, error) {
+	isRecordValid := func(rec *p.InternalVisibilityWorkflowExecutionInfo) bool {
+		return !request.EarliestTime.After(rec.CloseTime) && !rec.CloseTime.After(request.LatestTime)
+	}
+
+	ListClosedWorkflowExecutionsQuery := getListWorkflowExecutionsQuery(request, true)
+	resp, err := v.pinotClient.ExecuteSQL(tableName, ListClosedWorkflowExecutionsQuery)
+	if err != nil {
+		return nil, &types.InternalServiceError{
+			Message: fmt.Sprintf("ListClosedWorkflowExecutions failed, %v", err),
+		}
+	}
+	return v.getInternalListWorkflowExecutionsResponse(resp, isRecordValid)
 }
 
-/*
-	SELECT *
-	FROM {tableName}
-	WHERE DomainId = {DomainID}
+/****************************** Response Translator ******************************/
+func buildMap(hit []interface{}, columnNames []string) map[string]interface{} {
+	if len(hit) != len(columnNames) {
+		return nil
+	}
+	resMap := make(map[string]interface{})
 
-	AND CloseTime BETWEEN {earlistTime} AND {latestTime}
+	for i := 0; i < len(columnNames); i++ {
+		resMap[columnNames[i]] = hit[i]
+	}
 
-	AND CloseStatus = 1
+	return resMap
+}
 
-	Order BY CloseTime DESC
-	Order BY RunId DESC
-*/
+// VisibilityRecord is a struct of doc for deserialization
+type VisibilityRecord struct {
+	WorkflowID    string
+	RunID         string
+	WorkflowType  string
+	DomainID      string
+	StartTime     int64
+	ExecutionTime int64
+	CloseTime     int64
+	CloseStatus   workflow.WorkflowExecutionCloseStatus
+	HistoryLength int64
+	Encoding      string
+	TaskList      string
+	IsCron        bool
+	NumClusters   int16
+	UpdateTime    int64
+	Attr          map[string]interface{}
+}
 
-func getListClosedWorkflowExecutionsQuery(request *p.InternalListWorkflowExecutionsRequest) string {
+func (v *pinotVisibilityStore) convertSearchResultToVisibilityRecord(hit []interface{}, columnNames []string) *p.InternalVisibilityWorkflowExecutionInfo {
+	columnNameToValue := buildMap(hit, columnNames)
+	jsonColumnNameToValue, err := json.Marshal(columnNameToValue)
+	if err != nil { // log and skip error
+		v.logger.Error("unable to marshal columnNameToValue",
+			tag.Error(err), //tag.ESDocID(fmt.Sprintf(columnNameToValue["DocID"]))
+		)
+		return nil
+	}
+
+	var source *VisibilityRecord
+	err = json.Unmarshal(jsonColumnNameToValue, &source)
+	if err != nil { // log and skip error
+		v.logger.Error("unable to marshal columnNameToValue",
+			tag.Error(err), //tag.ESDocID(fmt.Sprintf(columnNameToValue["DocID"]))
+		)
+		return nil
+	}
+
+	record := &p.InternalVisibilityWorkflowExecutionInfo{
+		DomainID:         source.DomainID,
+		WorkflowType:     source.WorkflowType,
+		WorkflowID:       source.WorkflowID,
+		RunID:            source.RunID,
+		TypeName:         source.WorkflowType,
+		StartTime:        time.UnixMilli(source.StartTime), // be careful: source.StartTime is in milisecond
+		ExecutionTime:    time.UnixMilli(source.ExecutionTime),
+		TaskList:         source.TaskList,
+		IsCron:           source.IsCron,
+		NumClusters:      source.NumClusters,
+		SearchAttributes: source.Attr,
+	}
+	if source.UpdateTime != 0 {
+		record.UpdateTime = time.UnixMilli(source.UpdateTime)
+	}
+	if source.CloseTime != 0 {
+		record.CloseTime = time.UnixMilli(source.CloseTime)
+		record.Status = thrift.ToWorkflowExecutionCloseStatus(&source.CloseStatus)
+		record.HistoryLength = source.HistoryLength
+	}
+
+	return record
+}
+
+func (v *pinotVisibilityStore) getInternalListWorkflowExecutionsResponse(
+	resp *pinot.BrokerResponse,
+	isRecordValid func(rec *p.InternalVisibilityWorkflowExecutionInfo) bool,
+) (*p.InternalListWorkflowExecutionsResponse, error) {
+	response := &p.InternalListWorkflowExecutionsResponse{}
+
+	schema := resp.ResultTable.DataSchema // get the schema to map results
+	//columnDataTypes := schema.ColumnDataTypes
+	columnNames := schema.ColumnNames
+	actualHits := resp.ResultTable.Rows
+
+	numOfActualHits := resp.ResultTable.GetRowCount()
+
+	response.Executions = make([]*p.InternalVisibilityWorkflowExecutionInfo, 0)
+
+	for i := 0; i < numOfActualHits; i++ {
+		workflowExecutionInfo := v.convertSearchResultToVisibilityRecord(actualHits[i], columnNames)
+		if isRecordValid == nil || isRecordValid(workflowExecutionInfo) {
+			response.Executions = append(response.Executions, workflowExecutionInfo)
+		}
+	}
+
+	//if numOfActualHits == pageSize { // this means the response is not the last page
+	//	var nextPageToken []byte
+	//	var err error
+	//
+	//	// ES Search API support pagination using From and PageSize, but has limit that From+PageSize cannot exceed a threshold
+	//	// to retrieve deeper pages, use ES SearchAfter
+	//	if searchHits.TotalHits <= int64(maxResultWindow-pageSize) { // use ES Search From+Size
+	//		nextPageToken, err = SerializePageToken(&ElasticVisibilityPageToken{From: token.From + numOfActualHits})
+	//	} else { // use ES Search After
+	//		var sortVal interface{}
+	//		sortVals := actualHits[len(response.Executions)-1].Sort
+	//		sortVal = sortVals[0]
+	//		tieBreaker := sortVals[1].(string)
+	//
+	//		nextPageToken, err = SerializePageToken(&ElasticVisibilityPageToken{SortValue: sortVal, TieBreaker: tieBreaker})
+	//	}
+	//	if err != nil {
+	//		return nil, err
+	//	}
+	//
+	//	response.NextPageToken = make([]byte, len(nextPageToken))
+	//	copy(response.NextPageToken, nextPageToken)
+	//}
+
+	return response, nil
+}
+
+func getListWorkflowExecutionsQuery(request *p.InternalListWorkflowExecutionsRequest, isClosed bool) string {
+	closeStatus := getCloseStatus(isClosed)
+
 	query := NewPinotQuery()
 
 	query.filters.addEqual("DomainId", request.DomainUUID)
 	query.filters.addTimeRange("CloseTime", request.EarliestTime, request.LatestTime)
-	query.filters.addEqual("CloseStatus", "1")
+	query.filters.addEqual("CloseStatus", closeStatus)
 
 	query.addPinotSorter("CloseTime", "DESC")
 	query.addPinotSorter("RunId", "DESC")
 	return query.String()
 }
 
-type PinotQuery struct {
-	query   string
-	filters PinotQueryFilter
-	sorters string
-}
-
-type PinotQueryFilter struct {
-	string
-}
-
-func (f *PinotQueryFilter) checkFirstFilter() {
-	if f.string == "" {
-		f.string = "WHERE "
+func getCloseStatus(isClosed bool) string {
+	if isClosed {
+		return "1"
 	} else {
-		f.string += "AND "
+		return "0"
 	}
-}
-
-func (f *PinotQueryFilter) addEqual(obj string, val string) {
-	f.checkFirstFilter()
-	f.string += fmt.Sprintf("%s = %s\n", obj, val)
-}
-
-func (f *PinotQueryFilter) addTimeRange(obj string, earlist time.Time, latest time.Time) {
-	f.checkFirstFilter()
-	f.string += fmt.Sprintf("%s BETWEEN %v AND %v\n", obj, earlist, latest)
-}
-
-func NewPinotQuery() PinotQuery {
-	return PinotQuery{
-		query:   fmt.Sprintf("SELECT *\nFROM %s\n", tableName),
-		filters: PinotQueryFilter{},
-		sorters: "",
-	}
-}
-
-func (q *PinotQuery) String() string {
-	return fmt.Sprintf("%s%s%s", q.query, q.filters.string, q.sorters)
-}
-
-func (q *PinotQuery) addPinotSorter(orderBy string, order string) {
-	q.sorters += fmt.Sprintf("Order BY %s %s\n", orderBy, order)
 }
 
 func (v *pinotVisibilityStore) ListOpenWorkflowExecutionsByType(ctx context.Context, request *p.InternalListWorkflowExecutionsByTypeRequest) (*p.InternalListWorkflowExecutionsResponse, error) {
@@ -351,14 +446,6 @@ func (v *pinotVisibilityStore) CountWorkflowExecutions(ctx context.Context, requ
 func (v *pinotVisibilityStore) DeleteUninitializedWorkflowExecution(ctx context.Context, request *p.VisibilityDeleteWorkflowExecutionRequest) error {
 	//TODO implement me
 	panic("implement me")
-}
-
-func (v *pinotVisibilityStore) ListOpenWorkflowExecutions(
-	ctx context.Context,
-	request *p.InternalListWorkflowExecutionsRequest,
-) (*p.InternalListWorkflowExecutionsResponse, error) {
-	//not implemented
-	return nil, nil
 }
 
 func (v *pinotVisibilityStore) checkProducer() {
@@ -419,4 +506,50 @@ func createVisibilityMessage(
 	}
 
 	return serializedMsg
+}
+
+/****************************** Request Translator ******************************/
+
+type PinotQuery struct {
+	query   string
+	filters PinotQueryFilter
+	sorters string
+}
+
+type PinotQueryFilter struct {
+	string
+}
+
+func (f *PinotQueryFilter) checkFirstFilter() {
+	if f.string == "" {
+		f.string = "WHERE "
+	} else {
+		f.string += "AND "
+	}
+}
+
+func (f *PinotQueryFilter) addEqual(obj string, val string) {
+	f.checkFirstFilter()
+	f.string += fmt.Sprintf("%s = %s\n", obj, val)
+}
+
+func (f *PinotQueryFilter) addTimeRange(obj string, earliest time.Time, latest time.Time) {
+	f.checkFirstFilter()
+	f.string += fmt.Sprintf("%s BETWEEN %v AND %v\n", obj, earliest.UnixMilli(), latest.UnixMilli())
+}
+
+func NewPinotQuery() PinotQuery {
+	return PinotQuery{
+		query:   fmt.Sprintf("SELECT *\nFROM %s\n", tableName),
+		filters: PinotQueryFilter{},
+		sorters: "",
+	}
+}
+
+func (q *PinotQuery) String() string {
+	return fmt.Sprintf("%s%s%s", q.query, q.filters.string, q.sorters)
+}
+
+func (q *PinotQuery) addPinotSorter(orderBy string, order string) {
+	q.sorters += fmt.Sprintf("Order BY %s %s\n", orderBy, order)
 }
