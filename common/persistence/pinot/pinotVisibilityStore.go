@@ -40,6 +40,8 @@ import (
 const (
 	pinotPersistenceName = "pinot"
 	tableName            = "cadence-visibility-pinot"
+	DescendingOrder      = "DESC"
+	AcendingOrder        = "ASC"
 )
 
 type (
@@ -245,7 +247,181 @@ func (v *pinotVisibilityStore) ListClosedWorkflowExecutions(
 	return v.getInternalListWorkflowExecutionsResponse(resp, isRecordValid)
 }
 
+func (v *pinotVisibilityStore) ListOpenWorkflowExecutionsByType(ctx context.Context, request *p.InternalListWorkflowExecutionsByTypeRequest) (*p.InternalListWorkflowExecutionsResponse, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (v *pinotVisibilityStore) ListClosedWorkflowExecutionsByType(ctx context.Context, request *p.InternalListWorkflowExecutionsByTypeRequest) (*p.InternalListWorkflowExecutionsResponse, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (v *pinotVisibilityStore) ListOpenWorkflowExecutionsByWorkflowID(ctx context.Context, request *p.InternalListWorkflowExecutionsByWorkflowIDRequest) (*p.InternalListWorkflowExecutionsResponse, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (v *pinotVisibilityStore) ListClosedWorkflowExecutionsByWorkflowID(ctx context.Context, request *p.InternalListWorkflowExecutionsByWorkflowIDRequest) (*p.InternalListWorkflowExecutionsResponse, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (v *pinotVisibilityStore) ListClosedWorkflowExecutionsByStatus(ctx context.Context, request *p.InternalListClosedWorkflowExecutionsByStatusRequest) (*p.InternalListWorkflowExecutionsResponse, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (v *pinotVisibilityStore) GetClosedWorkflowExecution(ctx context.Context, request *p.InternalGetClosedWorkflowExecutionRequest) (*p.InternalGetClosedWorkflowExecutionResponse, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (v *pinotVisibilityStore) DeleteWorkflowExecution(ctx context.Context, request *p.VisibilityDeleteWorkflowExecutionRequest) error {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (v *pinotVisibilityStore) ListWorkflowExecutions(ctx context.Context, request *p.ListWorkflowExecutionsByQueryRequest) (*p.InternalListWorkflowExecutionsResponse, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (v *pinotVisibilityStore) ScanWorkflowExecutions(ctx context.Context, request *p.ListWorkflowExecutionsByQueryRequest) (*p.InternalListWorkflowExecutionsResponse, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (v *pinotVisibilityStore) CountWorkflowExecutions(ctx context.Context, request *p.CountWorkflowExecutionsRequest) (*p.CountWorkflowExecutionsResponse, error) {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (v *pinotVisibilityStore) DeleteUninitializedWorkflowExecution(ctx context.Context, request *p.VisibilityDeleteWorkflowExecutionRequest) error {
+	//TODO implement me
+	panic("implement me")
+}
+
+func (v *pinotVisibilityStore) checkProducer() {
+	if v.producer == nil {
+		// must be bug, check history setup
+		panic("message producer is nil")
+	}
+}
+
+func createVisibilityMessage(
+// common parameters
+	domainID string,
+	wid,
+	rid string,
+	workflowTypeName string,
+	taskList string,
+	startTimeUnixNano int64,
+	executionTimeUnixNano int64,
+	taskID int64,
+	memo []byte,
+	encoding common.EncodingType,
+	isCron bool,
+	NumClusters int16,
+	searchAttributes map[string][]byte,
+	visibilityOperation common.VisibilityOperation,
+// specific to certain status
+	endTimeUnixNano int64,                             // close execution
+	closeStatus workflow.WorkflowExecutionCloseStatus, // close execution
+	historyLength int64,                               // close execution
+	updateTimeUnixNano int64,                          // update execution,
+	shardID int64,
+) []byte {
+	msg := visibilityMessage{
+		DomainID:              domainID,
+		Wid:                   wid,
+		Rid:                   rid,
+		WorkflowTypeName:      workflowTypeName,
+		TaskList:              taskList,
+		StartTimeUnixNano:     startTimeUnixNano,
+		ExecutionTimeUnixNano: executionTimeUnixNano,
+		TaskID:                taskID,
+		Memo:                  memo,
+		Encoding:              encoding,
+		IsCron:                isCron,
+		NumClusters:           NumClusters,
+		SearchAttributes:      searchAttributes,
+		VisibilityOperation:   visibilityOperation,
+		EndTimeUnixNano:       endTimeUnixNano,
+		CloseStatus:           closeStatus,
+		HistoryLength:         historyLength,
+		UpdateTimeUnixNano:    updateTimeUnixNano,
+		ShardID:               shardID,
+	}
+
+	serializedMsg, err := json.Marshal(msg)
+	if err != nil {
+		panic("serialize msg error!")
+	}
+
+	return serializedMsg
+}
+
+/****************************** Request Translator ******************************/
+
+type PinotQuery struct {
+	query   string
+	filters PinotQueryFilter
+	sorters string
+}
+
+type PinotQueryFilter struct {
+	string
+}
+
+func (f *PinotQueryFilter) checkFirstFilter() {
+	if f.string == "" {
+		f.string = "WHERE "
+	} else {
+		f.string += "AND "
+	}
+}
+
+func (f *PinotQueryFilter) addEqual(obj string, val interface{}) {
+	f.checkFirstFilter()
+	f.string += fmt.Sprintf("%s = %s\n", obj, val)
+}
+
+// addGte check object is greater than or equals to val
+func (f *PinotQueryFilter) addGte(obj string, val interface{}) {
+	f.checkFirstFilter()
+	f.string += fmt.Sprintf("%s >= %s\n", obj, val)
+}
+
+// addLte check object is less than val
+func (f *PinotQueryFilter) addLt(obj string, val interface{}) {
+	f.checkFirstFilter()
+	f.string += fmt.Sprintf("%s < %s\n", obj, val)
+}
+
+func (f *PinotQueryFilter) addTimeRange(obj string, earliest interface{}, latest interface{}) {
+	f.checkFirstFilter()
+	f.string += fmt.Sprintf("%s BETWEEN %v AND %v\n", obj, earliest, latest)
+}
+
+func NewPinotQuery() PinotQuery {
+	return PinotQuery{
+		query:   fmt.Sprintf("SELECT *\nFROM %s\n", tableName),
+		filters: PinotQueryFilter{},
+		sorters: "",
+	}
+}
+
+func (q *PinotQuery) String() string {
+	return fmt.Sprintf("%s%s%s", q.query, q.filters.string, q.sorters)
+}
+
+func (q *PinotQuery) addPinotSorter(orderBy string, order string) {
+	q.sorters += fmt.Sprintf("Order BY %s %s\n", orderBy, order)
+}
+
 /****************************** Response Translator ******************************/
+
 func buildMap(hit []interface{}, columnNames []string) map[string]interface{} {
 	if len(hit) != len(columnNames) {
 		return nil
@@ -372,184 +548,17 @@ func (v *pinotVisibilityStore) getInternalListWorkflowExecutionsResponse(
 }
 
 func getListWorkflowExecutionsQuery(request *p.InternalListWorkflowExecutionsRequest, isClosed bool) string {
-	closeStatus := getCloseStatus(isClosed)
-
 	query := NewPinotQuery()
 
 	query.filters.addEqual("DomainId", request.DomainUUID)
-	query.filters.addTimeRange("CloseTime", request.EarliestTime, request.LatestTime)
-	query.filters.addEqual("CloseStatus", closeStatus)
-
-	query.addPinotSorter("CloseTime", "DESC")
-	query.addPinotSorter("RunId", "DESC")
-	return query.String()
-}
-
-func getCloseStatus(isClosed bool) string {
+	query.filters.addTimeRange("CloseTime", request.EarliestTime.UnixMilli(), request.LatestTime.UnixMilli()) //convert Unix Time to miliseconds
 	if isClosed {
-		return "1"
+		query.filters.addGte("CloseStatus", 0)
 	} else {
-		return "0"
-	}
-}
-
-func (v *pinotVisibilityStore) ListOpenWorkflowExecutionsByType(ctx context.Context, request *p.InternalListWorkflowExecutionsByTypeRequest) (*p.InternalListWorkflowExecutionsResponse, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (v *pinotVisibilityStore) ListClosedWorkflowExecutionsByType(ctx context.Context, request *p.InternalListWorkflowExecutionsByTypeRequest) (*p.InternalListWorkflowExecutionsResponse, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (v *pinotVisibilityStore) ListOpenWorkflowExecutionsByWorkflowID(ctx context.Context, request *p.InternalListWorkflowExecutionsByWorkflowIDRequest) (*p.InternalListWorkflowExecutionsResponse, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (v *pinotVisibilityStore) ListClosedWorkflowExecutionsByWorkflowID(ctx context.Context, request *p.InternalListWorkflowExecutionsByWorkflowIDRequest) (*p.InternalListWorkflowExecutionsResponse, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (v *pinotVisibilityStore) ListClosedWorkflowExecutionsByStatus(ctx context.Context, request *p.InternalListClosedWorkflowExecutionsByStatusRequest) (*p.InternalListWorkflowExecutionsResponse, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (v *pinotVisibilityStore) GetClosedWorkflowExecution(ctx context.Context, request *p.InternalGetClosedWorkflowExecutionRequest) (*p.InternalGetClosedWorkflowExecutionResponse, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (v *pinotVisibilityStore) DeleteWorkflowExecution(ctx context.Context, request *p.VisibilityDeleteWorkflowExecutionRequest) error {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (v *pinotVisibilityStore) ListWorkflowExecutions(ctx context.Context, request *p.ListWorkflowExecutionsByQueryRequest) (*p.InternalListWorkflowExecutionsResponse, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (v *pinotVisibilityStore) ScanWorkflowExecutions(ctx context.Context, request *p.ListWorkflowExecutionsByQueryRequest) (*p.InternalListWorkflowExecutionsResponse, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (v *pinotVisibilityStore) CountWorkflowExecutions(ctx context.Context, request *p.CountWorkflowExecutionsRequest) (*p.CountWorkflowExecutionsResponse, error) {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (v *pinotVisibilityStore) DeleteUninitializedWorkflowExecution(ctx context.Context, request *p.VisibilityDeleteWorkflowExecutionRequest) error {
-	//TODO implement me
-	panic("implement me")
-}
-
-func (v *pinotVisibilityStore) checkProducer() {
-	if v.producer == nil {
-		// must be bug, check history setup
-		panic("message producer is nil")
-	}
-}
-
-func createVisibilityMessage(
-	// common parameters
-	domainID string,
-	wid,
-	rid string,
-	workflowTypeName string,
-	taskList string,
-	startTimeUnixNano int64,
-	executionTimeUnixNano int64,
-	taskID int64,
-	memo []byte,
-	encoding common.EncodingType,
-	isCron bool,
-	NumClusters int16,
-	searchAttributes map[string][]byte,
-	visibilityOperation common.VisibilityOperation,
-	// specific to certain status
-	endTimeUnixNano int64, // close execution
-	closeStatus workflow.WorkflowExecutionCloseStatus, // close execution
-	historyLength int64, // close execution
-	updateTimeUnixNano int64, // update execution,
-	shardID int64,
-) []byte {
-	msg := visibilityMessage{
-		DomainID:              domainID,
-		Wid:                   wid,
-		Rid:                   rid,
-		WorkflowTypeName:      workflowTypeName,
-		TaskList:              taskList,
-		StartTimeUnixNano:     startTimeUnixNano,
-		ExecutionTimeUnixNano: executionTimeUnixNano,
-		TaskID:                taskID,
-		Memo:                  memo,
-		Encoding:              encoding,
-		IsCron:                isCron,
-		NumClusters:           NumClusters,
-		SearchAttributes:      searchAttributes,
-		VisibilityOperation:   visibilityOperation,
-		EndTimeUnixNano:       endTimeUnixNano,
-		CloseStatus:           closeStatus,
-		HistoryLength:         historyLength,
-		UpdateTimeUnixNano:    updateTimeUnixNano,
-		ShardID:               shardID,
+		query.filters.addLt("CloseStatus", 0)
 	}
 
-	serializedMsg, err := json.Marshal(msg)
-	if err != nil {
-		panic("serialize msg error!")
-	}
-
-	return serializedMsg
-}
-
-/****************************** Request Translator ******************************/
-
-type PinotQuery struct {
-	query   string
-	filters PinotQueryFilter
-	sorters string
-}
-
-type PinotQueryFilter struct {
-	string
-}
-
-func (f *PinotQueryFilter) checkFirstFilter() {
-	if f.string == "" {
-		f.string = "WHERE "
-	} else {
-		f.string += "AND "
-	}
-}
-
-func (f *PinotQueryFilter) addEqual(obj string, val string) {
-	f.checkFirstFilter()
-	f.string += fmt.Sprintf("%s = %s\n", obj, val)
-}
-
-func (f *PinotQueryFilter) addTimeRange(obj string, earliest time.Time, latest time.Time) {
-	f.checkFirstFilter()
-	f.string += fmt.Sprintf("%s BETWEEN %v AND %v\n", obj, earliest.UnixMilli(), latest.UnixMilli())
-}
-
-func NewPinotQuery() PinotQuery {
-	return PinotQuery{
-		query:   fmt.Sprintf("SELECT *\nFROM %s\n", tableName),
-		filters: PinotQueryFilter{},
-		sorters: "",
-	}
-}
-
-func (q *PinotQuery) String() string {
-	return fmt.Sprintf("%s%s%s", q.query, q.filters.string, q.sorters)
-}
-
-func (q *PinotQuery) addPinotSorter(orderBy string, order string) {
-	q.sorters += fmt.Sprintf("Order BY %s %s\n", orderBy, order)
+	query.addPinotSorter("CloseTime", DescendingOrder)
+	query.addPinotSorter("RunId", DescendingOrder)
+	return query.String()
 }
