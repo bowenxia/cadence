@@ -34,6 +34,7 @@ import (
 	"github.com/uber/cadence/common/service"
 	"github.com/uber/cadence/common/types"
 	"github.com/uber/cadence/common/types/mapper/thrift"
+	"strings"
 	"time"
 )
 
@@ -42,6 +43,25 @@ const (
 	tableName            = "cadence-visibility-pinot"
 	DescendingOrder      = "DESC"
 	AcendingOrder        = "ASC"
+
+	/**********  database related terms  ************/
+	DomainID            = "DomainID"
+	WorkflowID          = "WorkflowID"
+	RunID               = "RunID"
+	WorkflowType        = "WorkflowType"
+	StartTime           = "StartTime"
+	ExecutionTime       = "ExecutionTime"
+	CloseTime           = "CloseTime"
+	CloseStatus         = "CloseStatus"
+	HistoryLength       = "HistoryLength"
+	Memo                = "Memo"
+	Encoding            = "Encoding"
+	TaskList            = "TaskList"
+	IsCron              = "IsCron"
+	NumClusters         = "NumClusters"
+	VisibilityOperation = "VisibilityOperation"
+	UpdateTime          = "UpdateTime"
+	ShardID             = "ShardID"
 )
 
 type (
@@ -96,8 +116,7 @@ func NewPinotVisibilityStore(
 }
 
 func (v *pinotVisibilityStore) Close() {
-	//TODO implement me
-	panic("implement me")
+	v.pinotClient.CloseTrace() // TODO: need to double check what is close trace do. Does it close the client?
 }
 
 func (v *pinotVisibilityStore) GetName() string {
@@ -248,57 +267,184 @@ func (v *pinotVisibilityStore) ListClosedWorkflowExecutions(
 }
 
 func (v *pinotVisibilityStore) ListOpenWorkflowExecutionsByType(ctx context.Context, request *p.InternalListWorkflowExecutionsByTypeRequest) (*p.InternalListWorkflowExecutionsResponse, error) {
-	//TODO implement me
-	panic("implement me")
+	isRecordValid := func(rec *p.InternalVisibilityWorkflowExecutionInfo) bool {
+		return !request.EarliestTime.After(rec.CloseTime) && !rec.CloseTime.After(request.LatestTime)
+	}
+
+	ListClosedWorkflowExecutionsQuery := getListWorkflowExecutionsByTypeQuery(request, false)
+	resp, err := v.pinotClient.ExecuteSQL(tableName, ListClosedWorkflowExecutionsQuery)
+	if err != nil {
+		return nil, &types.InternalServiceError{
+			Message: fmt.Sprintf("ListClosedWorkflowExecutions failed, %v", err),
+		}
+	}
+	return v.getInternalListWorkflowExecutionsResponse(resp, isRecordValid)
 }
 
 func (v *pinotVisibilityStore) ListClosedWorkflowExecutionsByType(ctx context.Context, request *p.InternalListWorkflowExecutionsByTypeRequest) (*p.InternalListWorkflowExecutionsResponse, error) {
-	//TODO implement me
-	panic("implement me")
+	isRecordValid := func(rec *p.InternalVisibilityWorkflowExecutionInfo) bool {
+		return !request.EarliestTime.After(rec.CloseTime) && !rec.CloseTime.After(request.LatestTime)
+	}
+
+	ListClosedWorkflowExecutionsQuery := getListWorkflowExecutionsByTypeQuery(request, true)
+	resp, err := v.pinotClient.ExecuteSQL(tableName, ListClosedWorkflowExecutionsQuery)
+	if err != nil {
+		return nil, &types.InternalServiceError{
+			Message: fmt.Sprintf("ListClosedWorkflowExecutions failed, %v", err),
+		}
+	}
+	return v.getInternalListWorkflowExecutionsResponse(resp, isRecordValid)
 }
 
 func (v *pinotVisibilityStore) ListOpenWorkflowExecutionsByWorkflowID(ctx context.Context, request *p.InternalListWorkflowExecutionsByWorkflowIDRequest) (*p.InternalListWorkflowExecutionsResponse, error) {
-	//TODO implement me
-	panic("implement me")
+	isRecordValid := func(rec *p.InternalVisibilityWorkflowExecutionInfo) bool {
+		return !request.EarliestTime.After(rec.CloseTime) && !rec.CloseTime.After(request.LatestTime)
+	}
+
+	ListClosedWorkflowExecutionsQuery := getListWorkflowExecutionsByWorkflowIDQuery(request, false)
+	resp, err := v.pinotClient.ExecuteSQL(tableName, ListClosedWorkflowExecutionsQuery)
+	if err != nil {
+		return nil, &types.InternalServiceError{
+			Message: fmt.Sprintf("ListClosedWorkflowExecutions failed, %v", err),
+		}
+	}
+	return v.getInternalListWorkflowExecutionsResponse(resp, isRecordValid)
 }
 
 func (v *pinotVisibilityStore) ListClosedWorkflowExecutionsByWorkflowID(ctx context.Context, request *p.InternalListWorkflowExecutionsByWorkflowIDRequest) (*p.InternalListWorkflowExecutionsResponse, error) {
-	//TODO implement me
-	panic("implement me")
+	isRecordValid := func(rec *p.InternalVisibilityWorkflowExecutionInfo) bool {
+		return !request.EarliestTime.After(rec.CloseTime) && !rec.CloseTime.After(request.LatestTime)
+	}
+
+	ListClosedWorkflowExecutionsQuery := getListWorkflowExecutionsByWorkflowIDQuery(request, true)
+	resp, err := v.pinotClient.ExecuteSQL(tableName, ListClosedWorkflowExecutionsQuery)
+	if err != nil {
+		return nil, &types.InternalServiceError{
+			Message: fmt.Sprintf("ListClosedWorkflowExecutions failed, %v", err),
+		}
+	}
+	return v.getInternalListWorkflowExecutionsResponse(resp, isRecordValid)
 }
 
 func (v *pinotVisibilityStore) ListClosedWorkflowExecutionsByStatus(ctx context.Context, request *p.InternalListClosedWorkflowExecutionsByStatusRequest) (*p.InternalListWorkflowExecutionsResponse, error) {
-	//TODO implement me
-	panic("implement me")
+	isRecordValid := func(rec *p.InternalVisibilityWorkflowExecutionInfo) bool {
+		return !request.EarliestTime.After(rec.CloseTime) && !rec.CloseTime.After(request.LatestTime)
+	}
+
+	ListClosedWorkflowExecutionsQuery := getListWorkflowExecutionsByStatusQuery(request)
+	resp, err := v.pinotClient.ExecuteSQL(tableName, ListClosedWorkflowExecutionsQuery)
+	if err != nil {
+		return nil, &types.InternalServiceError{
+			Message: fmt.Sprintf("ListClosedWorkflowExecutions failed, %v", err),
+		}
+	}
+	return v.getInternalListWorkflowExecutionsResponse(resp, isRecordValid)
 }
 
 func (v *pinotVisibilityStore) GetClosedWorkflowExecution(ctx context.Context, request *p.InternalGetClosedWorkflowExecutionRequest) (*p.InternalGetClosedWorkflowExecutionResponse, error) {
-	//TODO implement me
-	panic("implement me")
+	ListClosedWorkflowExecutionsQuery := getGetClosedWorkflowExecutionQuery(request)
+	resp, err := v.pinotClient.ExecuteSQL(tableName, ListClosedWorkflowExecutionsQuery)
+	if err != nil {
+		return nil, &types.InternalServiceError{
+			Message: fmt.Sprintf("ListClosedWorkflowExecutions failed, %v", err),
+		}
+	}
+	return v.getInternalGetClosedWorkflowExecutionResponse(resp)
 }
 
 func (v *pinotVisibilityStore) DeleteWorkflowExecution(ctx context.Context, request *p.VisibilityDeleteWorkflowExecutionRequest) error {
-	//TODO implement me
+	//TODO implement me. Need to figure out a way to represent deletion in pinot
 	panic("implement me")
 }
 
 func (v *pinotVisibilityStore) ListWorkflowExecutions(ctx context.Context, request *p.ListWorkflowExecutionsByQueryRequest) (*p.InternalListWorkflowExecutionsResponse, error) {
-	//TODO implement me
-	panic("implement me")
+	checkPageSize(request)
+
+	// TODO: need to check next page token in the future
+
+	workflowExecutionQuery := getListWorkflowExecutionQuery(request)
+	resp, err := v.pinotClient.ExecuteSQL(tableName, workflowExecutionQuery)
+	if err != nil {
+		return nil, &types.InternalServiceError{
+			Message: fmt.Sprintf("ListClosedWorkflowExecutions failed, %v", err),
+		}
+	}
+
+	return v.getInternalListWorkflowExecutionsResponse(resp, nil)
 }
 
 func (v *pinotVisibilityStore) ScanWorkflowExecutions(ctx context.Context, request *p.ListWorkflowExecutionsByQueryRequest) (*p.InternalListWorkflowExecutionsResponse, error) {
-	//TODO implement me
-	panic("implement me")
+	checkPageSize(request)
+
+	// TODO: need to check next page token in the future
+
+	workflowExecutionQuery := getListWorkflowExecutionQuery(request)
+	resp, err := v.pinotClient.ExecuteSQL(tableName, workflowExecutionQuery)
+	if err != nil {
+		return nil, &types.InternalServiceError{
+			Message: fmt.Sprintf("ListClosedWorkflowExecutions failed, %v", err),
+		}
+	}
+
+	return v.getInternalListWorkflowExecutionsResponse(resp, nil)
 }
 
 func (v *pinotVisibilityStore) CountWorkflowExecutions(ctx context.Context, request *p.CountWorkflowExecutionsRequest) (*p.CountWorkflowExecutionsResponse, error) {
-	//TODO implement me
-	panic("implement me")
+	workflowExecutionQuery := getCountWorkflowExecutionsQuery(request)
+	resp, err := v.pinotClient.ExecuteSQL(tableName, workflowExecutionQuery)
+	if err != nil {
+		return nil, &types.InternalServiceError{
+			Message: fmt.Sprintf("ListClosedWorkflowExecutions failed, %v", err),
+		}
+	}
+
+	return &p.CountWorkflowExecutionsResponse{
+		Count: int64(resp.ResultTable.GetRowCount()),
+	}, nil
+}
+
+func getCountWorkflowExecutionsQuery(request *p.CountWorkflowExecutionsRequest) string {
+	query := NewPinotCountQuery()
+
+	// need to add Domain ID
+	query.filters.addEqual(DomainID, request.DomainUUID)
+
+	requestQuery := strings.TrimSpace(request.Query)
+	if requestQuery != "" {
+		query.filters.addQuery(request.Query)
+	}
+
+	return query.String()
+}
+
+func getListWorkflowExecutionQuery(request *p.ListWorkflowExecutionsByQueryRequest) string {
+	query := NewPinotQuery()
+
+	// need to add Domain ID
+	query.filters.addEqual(DomainID, request.DomainUUID)
+
+	requestQuery := strings.TrimSpace(request.Query)
+	if requestQuery == "" {
+		query.addLimits(request.PageSize)
+	} else if common.IsJustOrderByClause(requestQuery) {
+		query.concatSorter(requestQuery)
+		query.addLimits(request.PageSize)
+	} else {
+		query.filters.addQuery(request.Query)
+		query.addLimits(request.PageSize)
+	}
+
+	return query.String()
+}
+
+func checkPageSize(request *p.ListWorkflowExecutionsByQueryRequest) {
+	if request.PageSize == 0 {
+		request.PageSize = 1000
+	}
 }
 
 func (v *pinotVisibilityStore) DeleteUninitializedWorkflowExecution(ctx context.Context, request *p.VisibilityDeleteWorkflowExecutionRequest) error {
-	//TODO implement me
+	//TODO implement me. Need to figure out a way to represent deletion in pinot
 	panic("implement me")
 }
 
@@ -310,7 +456,7 @@ func (v *pinotVisibilityStore) checkProducer() {
 }
 
 func createVisibilityMessage(
-// common parameters
+	// common parameters
 	domainID string,
 	wid,
 	rid string,
@@ -325,11 +471,11 @@ func createVisibilityMessage(
 	NumClusters int16,
 	searchAttributes map[string][]byte,
 	visibilityOperation common.VisibilityOperation,
-// specific to certain status
-	endTimeUnixNano int64,                             // close execution
+	// specific to certain status
+	endTimeUnixNano int64, // close execution
 	closeStatus workflow.WorkflowExecutionCloseStatus, // close execution
-	historyLength int64,                               // close execution
-	updateTimeUnixNano int64,                          // update execution,
+	historyLength int64, // close execution
+	updateTimeUnixNano int64, // update execution,
 	shardID int64,
 ) []byte {
 	msg := visibilityMessage{
@@ -368,6 +514,41 @@ type PinotQuery struct {
 	query   string
 	filters PinotQueryFilter
 	sorters string
+	limits  string
+}
+
+func NewPinotQuery() PinotQuery {
+	return PinotQuery{
+		query:   fmt.Sprintf("SELECT *\nFROM %s\n", tableName),
+		filters: PinotQueryFilter{},
+		sorters: "",
+		limits:  "",
+	}
+}
+
+func NewPinotCountQuery() PinotQuery {
+	return PinotQuery{
+		query:   fmt.Sprintf("SELECT COUNT(*)\nFROM %s\n", tableName),
+		filters: PinotQueryFilter{},
+		sorters: "",
+		limits:  "",
+	}
+}
+
+func (q *PinotQuery) String() string {
+	return fmt.Sprintf("%s%s%s%s", q.query, q.filters.string, q.sorters, q.limits)
+}
+
+func (q *PinotQuery) concatSorter(sorter string) {
+	q.sorters += sorter
+}
+
+func (q *PinotQuery) addPinotSorter(orderBy string, order string) {
+	q.sorters += fmt.Sprintf("Order BY %s %s\n", orderBy, order)
+}
+
+func (q *PinotQuery) addLimits(limit int) {
+	q.limits += fmt.Sprintf("LIMIT %d\n", limit)
 }
 
 type PinotQueryFilter struct {
@@ -387,6 +568,12 @@ func (f *PinotQueryFilter) addEqual(obj string, val interface{}) {
 	f.string += fmt.Sprintf("%s = %s\n", obj, val)
 }
 
+// addQuery adds a complete query into the filter
+func (f *PinotQueryFilter) addQuery(query string) {
+	f.checkFirstFilter()
+	f.string += fmt.Sprintf("%s\n", query)
+}
+
 // addGte check object is greater than or equals to val
 func (f *PinotQueryFilter) addGte(obj string, val interface{}) {
 	f.checkFirstFilter()
@@ -402,22 +589,6 @@ func (f *PinotQueryFilter) addLt(obj string, val interface{}) {
 func (f *PinotQueryFilter) addTimeRange(obj string, earliest interface{}, latest interface{}) {
 	f.checkFirstFilter()
 	f.string += fmt.Sprintf("%s BETWEEN %v AND %v\n", obj, earliest, latest)
-}
-
-func NewPinotQuery() PinotQuery {
-	return PinotQuery{
-		query:   fmt.Sprintf("SELECT *\nFROM %s\n", tableName),
-		filters: PinotQueryFilter{},
-		sorters: "",
-	}
-}
-
-func (q *PinotQuery) String() string {
-	return fmt.Sprintf("%s%s%s", q.query, q.filters.string, q.sorters)
-}
-
-func (q *PinotQuery) addPinotSorter(orderBy string, order string) {
-	q.sorters += fmt.Sprintf("Order BY %s %s\n", orderBy, order)
 }
 
 /****************************** Response Translator ******************************/
@@ -547,18 +718,92 @@ func (v *pinotVisibilityStore) getInternalListWorkflowExecutionsResponse(
 	return response, nil
 }
 
+func (v *pinotVisibilityStore) getInternalGetClosedWorkflowExecutionResponse(resp *pinot.BrokerResponse) (
+	*p.InternalGetClosedWorkflowExecutionResponse,
+	error,
+) {
+	response := &p.InternalGetClosedWorkflowExecutionResponse{}
+	schema := resp.ResultTable.DataSchema // get the schema to map results
+	columnNames := schema.ColumnNames
+	actualHits := resp.ResultTable.Rows
+	response.Execution = v.convertSearchResultToVisibilityRecord(actualHits[0], columnNames)
+
+	return response, nil
+}
+
 func getListWorkflowExecutionsQuery(request *p.InternalListWorkflowExecutionsRequest, isClosed bool) string {
 	query := NewPinotQuery()
 
-	query.filters.addEqual("DomainId", request.DomainUUID)
-	query.filters.addTimeRange("CloseTime", request.EarliestTime.UnixMilli(), request.LatestTime.UnixMilli()) //convert Unix Time to miliseconds
+	query.filters.addEqual(DomainID, request.DomainUUID)
+	query.filters.addTimeRange(CloseTime, request.EarliestTime.UnixMilli(), request.LatestTime.UnixMilli()) //convert Unix Time to miliseconds
 	if isClosed {
-		query.filters.addGte("CloseStatus", 0)
+		query.filters.addGte(CloseStatus, 0)
 	} else {
-		query.filters.addLt("CloseStatus", 0)
+		query.filters.addLt(CloseStatus, 0)
 	}
 
-	query.addPinotSorter("CloseTime", DescendingOrder)
-	query.addPinotSorter("RunId", DescendingOrder)
+	query.addPinotSorter(CloseTime, DescendingOrder)
+	query.addPinotSorter(RunID, DescendingOrder)
+	return query.String()
+}
+
+func getListWorkflowExecutionsByTypeQuery(request *p.InternalListWorkflowExecutionsByTypeRequest, isClosed bool) string {
+	query := NewPinotQuery()
+
+	query.filters.addEqual(DomainID, request.DomainUUID)
+	query.filters.addEqual(WorkflowType, request.WorkflowTypeName)
+	query.filters.addTimeRange(CloseTime, request.EarliestTime.UnixMilli(), request.LatestTime.UnixMilli()) //convert Unix Time to miliseconds
+	if isClosed {
+		query.filters.addGte(CloseStatus, 0)
+	} else {
+		query.filters.addLt(CloseStatus, 0)
+	}
+
+	query.addPinotSorter(CloseTime, DescendingOrder)
+	query.addPinotSorter(RunID, DescendingOrder)
+	return query.String()
+}
+
+func getListWorkflowExecutionsByWorkflowIDQuery(request *p.InternalListWorkflowExecutionsByWorkflowIDRequest, isClosed bool) string {
+	query := NewPinotQuery()
+
+	query.filters.addEqual(DomainID, request.DomainUUID)
+	query.filters.addEqual(WorkflowID, request.WorkflowID)
+	query.filters.addTimeRange(CloseTime, request.EarliestTime.UnixMilli(), request.LatestTime.UnixMilli()) //convert Unix Time to miliseconds
+	if isClosed {
+		query.filters.addGte(CloseStatus, 0)
+	} else {
+		query.filters.addLt(CloseStatus, 0)
+	}
+
+	query.addPinotSorter(CloseTime, DescendingOrder)
+	query.addPinotSorter(RunID, DescendingOrder)
+	return query.String()
+}
+
+func getListWorkflowExecutionsByStatusQuery(request *p.InternalListClosedWorkflowExecutionsByStatusRequest) string {
+	query := NewPinotQuery()
+
+	query.filters.addEqual(DomainID, request.DomainUUID)
+	query.filters.addEqual(CloseStatus, request.Status)
+	query.filters.addTimeRange(CloseTime, request.EarliestTime.UnixMilli(), request.LatestTime.UnixMilli()) //convert Unix Time to miliseconds
+
+	query.addPinotSorter(CloseTime, DescendingOrder)
+	query.addPinotSorter(RunID, DescendingOrder)
+	return query.String()
+}
+
+func getGetClosedWorkflowExecutionQuery(request *p.InternalGetClosedWorkflowExecutionRequest) string {
+	query := NewPinotQuery()
+
+	query.filters.addEqual(DomainID, request.DomainUUID)
+	query.filters.addGte(CloseStatus, 0)
+	query.filters.addEqual(WorkflowID, request.Execution.GetWorkflowID())
+
+	rid := request.Execution.GetRunID()
+	if rid != "" {
+		query.filters.addEqual(RunID, rid)
+	}
+
 	return query.String()
 }
